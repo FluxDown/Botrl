@@ -1,54 +1,31 @@
-# rlbot/policy_loader.py
-import os
-import time
-import torch
-import numpy as np
-import torch.nn as nn
+import os, torch, numpy as np
 
-# --- construit le modèle exact de l'entraînement ---
 def build_model(obs_dim: int, n_actions: int):
-    """
-    Architecture EXACTE de src/networks/actor_critic.py
-    3 layers de 256 neurons + ReLU
-    """
+    import torch.nn as nn
     class ActorCritic(nn.Module):
         def __init__(self, obs_dim, n_actions):
             super().__init__()
-            # Policy: 3 layers
-            self.policy_net = nn.Sequential(
+            self.pi = nn.Sequential(
                 nn.Linear(obs_dim, 256), nn.ReLU(),
                 nn.Linear(256, 256), nn.ReLU(),
-                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, n_actions),
             )
-            self.policy_head = nn.Linear(256, n_actions)
-
-            # Value: 3 layers
-            self.value_net = nn.Sequential(
+            self.v = nn.Sequential(
                 nn.Linear(obs_dim, 256), nn.ReLU(),
                 nn.Linear(256, 256), nn.ReLU(),
-                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, 1),
             )
-            self.value_head = nn.Linear(256, 1)
-
         def forward(self, x):
-            policy_features = self.policy_net(x)
-            logits = self.policy_head(policy_features)
-            value_features = self.value_net(x)
-            value = self.value_head(value_features)
-            return logits, value
-
+            return self.pi(x), self.v(x)
     return ActorCritic(obs_dim, n_actions)
 
 class LivePolicy:
-    """
-    Recharge latest_policy.pt quand il change.
-    """
-    def __init__(self, weights_path: str, obs_dim: int, n_actions: int, device: str = "cpu"):
+    def __init__(self, weights_path: str, obs_dim: int, n_actions: int, device="cpu"):
         self.path = weights_path
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.model = build_model(obs_dim, n_actions).to(self.device).eval()
         self.last_mtime = 0.0
-        self.warm = False
+        self.n_actions = n_actions
 
     def maybe_reload(self):
         try:
@@ -61,14 +38,16 @@ class LivePolicy:
         except FileNotFoundError:
             pass
         except Exception as e:
-            # on ignore les erreurs de lecture ponctuelles pendant l'écriture
-            # (assure un os.replace côté trainer)
             print(f"[LivePolicy] reload error: {e}")
 
     @torch.no_grad()
     def act_discrete(self, obs_vec: np.ndarray) -> int:
         self.maybe_reload()
-        x = torch.from_numpy(obs_vec).float().to(self.device).unsqueeze(0)  # (1, obs_dim)
-        logits, _ = self.model(x)
-        a = torch.argmax(logits, dim=-1).item()
-        return int(a)
+        x = torch.from_numpy(obs_vec).float().to(self.device).unsqueeze(0)
+        try:
+            logits, _ = self.model(x)  # (1, n_actions)
+            a = int(torch.argmax(logits, dim=-1).item())
+        except Exception:
+            # Si pas de poids valides encore: action random
+            a = int(np.random.randint(self.n_actions))
+        return a
