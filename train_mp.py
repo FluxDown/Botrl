@@ -38,13 +38,13 @@ from src.utils.parallel_envs_mp import ParallelEnvsMP
 from src.utils.vec_wrapper import SimpleVecNormalize, LRScheduler
 from src.utils.worker import create_env
 
-# GLOBAL config pour le pickling (nécessaire sur Windows)
-_GLOBAL_CONFIG = None
+def make_env_global(config):
+    """
+    Factory function GLOBALE pour créer des envs (pickable sur Windows).
 
-
-def make_env_global():
-    """Factory function GLOBALE pour créer des envs (pickable sur Windows)"""
-    return create_env(_GLOBAL_CONFIG)
+    IMPORTANT : Doit être au niveau module (pas locale) pour être pickable.
+    """
+    return create_env(config)
 
 
 def setup_cuda(device):
@@ -89,9 +89,7 @@ def get_num_envs(config):
 
 def train():
     """TRAINING FINAL avec vrai multi-processing"""
-    global _GLOBAL_CONFIG
     config = load_config('config.yaml')
-    _GLOBAL_CONFIG = config  # Stocker pour make_env_global()
 
     # Seed
     seed = config['training'].get('seed', 42)
@@ -132,7 +130,7 @@ def train():
     print(f"\n✓ Creating {num_envs} parallel PROCESSES...")
 
     # Utiliser la factory GLOBALE (pickable sur Windows)
-    envs = ParallelEnvsMP(make_env_global, num_envs)
+    envs = ParallelEnvsMP(make_env_global, num_envs, config)
 
     # Env d'évaluation (single)
     print("✓ Creating eval environment...")

@@ -9,7 +9,7 @@ from multiprocessing import Process, Pipe
 import numpy as np
 
 
-def _worker(env_fn, conn, worker_id):
+def _worker(env_fn, conn, worker_id, config):
     """
     Worker process qui tourne en parallèle.
 
@@ -17,17 +17,27 @@ def _worker(env_fn, conn, worker_id):
         env_fn: Factory function qui retourne un env
         conn: Pipe de communication avec le process principal
         worker_id: ID du worker (pour debug)
+        config: Configuration dict (passée explicitement pour Windows)
     """
     try:
-        env = env_fn()
+        env = env_fn(config)
 
         # Reset initial
         result = env.reset()
         obs_dict = result[0] if isinstance(result, tuple) else result
 
-        # En 1v1 : 2 agents (0=bleu, 1=orange), on contrôle le 0
-        agent_id = 0
-        obs = obs_dict[agent_id] if isinstance(obs_dict, dict) else obs_dict
+        # En 1v1 : 2 agents, récupérer leurs IDs réels
+        if isinstance(obs_dict, dict):
+            agent_ids = list(obs_dict.keys())
+            agent_id = agent_ids[0]  # Notre agent (premier)
+            other_agent_id = agent_ids[1] if len(agent_ids) > 1 else None
+            obs = obs_dict[agent_id]
+            print(f"[Worker {worker_id}] Controlling agent {agent_id}, opponent {other_agent_id}")
+        else:
+            # Cas single agent
+            agent_id = 0
+            other_agent_id = None
+            obs = obs_dict
 
         # Episode tracking
         ep_reward = 0.0
@@ -40,11 +50,10 @@ def _worker(env_fn, conn, worker_id):
             if cmd == "step":
                 act = int(data)
 
-                # Action dict : notre agent (0) + adversaire noop (1)
-                action_dict = {
-                    0: np.array([act]),  # Notre agent
-                    1: np.array([0])     # Adversaire = noop
-                }
+                # Action dict : notre agent + adversaire noop
+                action_dict = {agent_id: np.array([act])}
+                if other_agent_id is not None:
+                    action_dict[other_agent_id] = np.array([0])  # Adversaire = noop
 
                 # Step
                 step_result = env.step(action_dict)
@@ -108,20 +117,21 @@ class ParallelEnvsMP:
     Communication via Pipes (non-bloquante).
 
     Usage:
-        def make_env():
+        def make_env(config):
             return create_env(config)
 
-        envs = ParallelEnvsMP(make_env, num_envs=8)
+        envs = ParallelEnvsMP(make_env, num_envs=8, config=config)
         obs_list = envs.reset()
         obs_list, rewards, dones, infos = envs.step(actions)
         envs.close()
     """
 
-    def __init__(self, make_env, num_envs):
+    def __init__(self, make_env, num_envs, config):
         """
         Args:
-            make_env: Factory function () -> RLGym env
+            make_env: Factory function (config) -> RLGym env
             num_envs: Nombre d'environnements parallèles
+            config: Configuration dict (sera passée aux workers)
         """
         self.num_envs = num_envs
         self.parents = []
@@ -129,10 +139,10 @@ class ParallelEnvsMP:
 
         print(f"Creating {num_envs} parallel processes...")
 
-        # Créer les workers
+        # Créer les workers (passer config explicitement)
         for i in range(num_envs):
             parent_conn, child_conn = Pipe()
-            proc = Process(target=_worker, args=(make_env, child_conn, i), daemon=True)
+            proc = Process(target=_worker, args=(make_env, child_conn, i, config), daemon=True)
             proc.start()
 
             self.parents.append(parent_conn)
