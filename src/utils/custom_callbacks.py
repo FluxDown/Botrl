@@ -71,8 +71,8 @@ class CustomTBCallback:
         for key, value in train_stats.items():
             self.writer.add_scalar(f"train/{key}", value, timestep)
 
-        # Logger la norme des gradients si l'agent est fourni
-        if agent is not None and hasattr(agent, "policy_network"):
+        # Logger la norme des gradients SEULEMENT tous les 10 updates (éviter overhead)
+        if agent is not None and hasattr(agent, "policy_network") and timestep % 10000 == 0:
             total_norm = 0.0
             for p in agent.policy_network.parameters():
                 if p.grad is not None:

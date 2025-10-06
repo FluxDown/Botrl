@@ -33,10 +33,10 @@ class RolloutBuffer:
         """Ajoute une transition au buffer"""
         self.observations[self.ptr] = torch.FloatTensor(obs).to(self.device)
         self.actions[self.ptr] = torch.FloatTensor(action).to(self.device)
-        self.log_probs[self.ptr] = log_prob
-        self.rewards[self.ptr] = reward
-        self.values[self.ptr] = value
-        self.dones[self.ptr] = done
+        self.log_probs[self.ptr] = float(log_prob)
+        self.rewards[self.ptr] = float(reward)
+        self.values[self.ptr] = float(value)
+        self.dones[self.ptr] = float(done)
 
         self.ptr += 1
         if self.ptr >= self.buffer_size:

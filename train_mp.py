@@ -256,18 +256,13 @@ def train():
                 total_steps += 1
                 pbar.update(1)
 
-                # Callback (toutes les 1k steps seulement)
-                if total_steps % 1000 == 0:
-                    tb_cb.on_step(infos[i], total_steps)
-
                 # Episode terminé
                 if dones[i] and 'episode' in infos[i]:
                     ep_count += 1
                     ep_r = infos[i]['episode']['r']
                     ep_buffer.append(ep_r)
 
-                    logger.log_scalar('episode/reward', ep_r, ep_count)
-
+                    # Update progress bar seulement (pas de I/O)
                     if ep_count % 10 == 0:
                         avg = np.mean(ep_buffer[-100:]) if ep_buffer else 0
                         pbar.set_postfix({'ep': ep_count, 'r': f'{ep_r:.1f}', 'avg100': f'{avg:.1f}'})
@@ -294,23 +289,28 @@ def train():
         progress = min(1.0, total_steps / train_cfg['total_timesteps'])
         new_ent = 0.01 - 0.009 * progress
         agent.ent_coef = new_ent
-        tb_cb.writer.add_scalar('train/entropy_coef', new_ent, total_steps)
 
-        # Log clip_fraction et KL (metriques PPO importantes)
-        if 'clip_fraction' in stats:
-            tb_cb.writer.add_scalar('train/clip_fraction', stats['clip_fraction'], total_steps)
-        if 'kl_divergence' in stats:
-            tb_cb.writer.add_scalar('train/kl_divergence', stats['kl_divergence'], total_steps)
+        # Log seulement tous les 4k steps (réduire I/O TensorBoard)
+        if total_steps % 4000 == 0:
+            tb_cb.writer.add_scalar('train/policy_loss', stats.get('policy_loss', 0), total_steps)
+            tb_cb.writer.add_scalar('train/value_loss', stats.get('value_loss', 0), total_steps)
+            tb_cb.writer.add_scalar('train/entropy_coef', new_ent, total_steps)
 
-        tb_cb.on_train_step(stats, total_steps, agent=agent)
-        logger.log_scalars('train', stats, total_steps)
+            if 'clip_fraction' in stats:
+                tb_cb.writer.add_scalar('train/clip_fraction', stats['clip_fraction'], total_steps)
+
+            # Episode reward mean
+            if ep_buffer:
+                avg_rew = np.mean(ep_buffer[-100:])
+                tb_cb.writer.add_scalar('episode/reward_mean', avg_rew, total_steps)
 
         buffer.clear()
 
-        # Eval
-        eval_rew = eval_cb.evaluate(agent, total_steps, writer=tb_cb.writer)
-        if eval_rew is not None:
-            pbar.write(f"✓ Eval @ {total_steps}: {eval_rew:.2f}")
+        # Eval (seulement si nécessaire selon eval_freq)
+        if total_steps % train_cfg.get('eval_freq', 50000) == 0 and total_steps > 0:
+            eval_rew = eval_cb.evaluate(agent, total_steps, writer=tb_cb.writer)
+            if eval_rew is not None:
+                pbar.write(f"✓ Eval @ {total_steps}: {eval_rew:.2f}")
 
         # Save
         if total_steps % train_cfg['save_interval'] == 0 and total_steps > 0:
