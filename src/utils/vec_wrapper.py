@@ -40,8 +40,8 @@ class SimpleVecNormalize:
     """
 
     def __init__(self, normalize_obs=True, normalize_reward=True, clip_obs=10.0, clip_reward=10.0, gamma=0.99, epsilon=1e-8):
-        self.normalize_obs = normalize_obs
-        self.normalize_reward = normalize_reward
+        self._normalize_obs = normalize_obs
+        self._normalize_reward = normalize_reward
         self.clip_obs = clip_obs
         self.clip_reward = clip_reward
         self.gamma = gamma
@@ -61,7 +61,7 @@ class SimpleVecNormalize:
 
     def normalize_obs_array(self, obs):
         """Normalise les observations"""
-        if not self.normalize_obs:
+        if not self._normalize_obs:
             return obs
 
         if self.obs_mean is None:
@@ -89,7 +89,7 @@ class SimpleVecNormalize:
 
     def normalize_reward(self, reward, done):
         """Normalise les récompenses"""
-        if not self.normalize_reward:
+        if not self._normalize_reward:
             return reward
 
         if self.returns is None:

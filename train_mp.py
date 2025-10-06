@@ -38,13 +38,17 @@ from src.utils.parallel_envs_mp import ParallelEnvsMP
 from src.utils.vec_wrapper import SimpleVecNormalize, LRScheduler
 from src.utils.worker import create_env
 
-def make_env_global(config):
+def make_env_global(config, seed=0):
     """
     Factory function GLOBALE pour créer des envs (pickable sur Windows).
 
     IMPORTANT : Doit être au niveau module (pas locale) pour être pickable.
+
+    Args:
+        config: Configuration dict
+        seed: Seed pour reproductibilité (différent par worker)
     """
-    return create_env(config)
+    return create_env(config, seed=seed)
 
 
 def setup_cuda(device):
@@ -130,7 +134,8 @@ def train():
     print(f"\n✓ Creating {num_envs} parallel PROCESSES...")
 
     # Utiliser la factory GLOBALE (pickable sur Windows)
-    envs = ParallelEnvsMP(make_env_global, num_envs, config)
+    base_seed = config['training'].get('seed', 42)
+    envs = ParallelEnvsMP(make_env_global, num_envs, config, base_seed=base_seed)
 
     # Env d'évaluation (single)
     print("✓ Creating eval environment...")

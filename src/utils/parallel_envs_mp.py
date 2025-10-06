@@ -9,7 +9,7 @@ from multiprocessing import Process, Pipe
 import numpy as np
 
 
-def _worker(env_fn, conn, worker_id, config):
+def _worker(env_fn, conn, worker_id, config, seed):
     """
     Worker process qui tourne en parallèle.
 
@@ -18,9 +18,10 @@ def _worker(env_fn, conn, worker_id, config):
         conn: Pipe de communication avec le process principal
         worker_id: ID du worker (pour debug)
         config: Configuration dict (passée explicitement pour Windows)
+        seed: Seed pour reproductibilité (différent par worker)
     """
     try:
-        env = env_fn(config)
+        env = env_fn(config, seed=seed)
 
         # Reset initial
         result = env.reset()
@@ -103,10 +104,18 @@ def _worker(env_fn, conn, worker_id, config):
                 break
 
     except Exception as e:
+        # Renvoyer l'erreur au parent (évite BrokenPipe/EOF silencieux)
         print(f"Worker {worker_id} crashed: {e}")
         import traceback
         traceback.print_exc()
-        conn.close()
+        try:
+            conn.send(("__error__", repr(e)))
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 class ParallelEnvsMP:
@@ -126,12 +135,13 @@ class ParallelEnvsMP:
         envs.close()
     """
 
-    def __init__(self, make_env, num_envs, config):
+    def __init__(self, make_env, num_envs, config, base_seed=0):
         """
         Args:
-            make_env: Factory function (config) -> RLGym env
+            make_env: Factory function (config, seed) -> RLGym env
             num_envs: Nombre d'environnements parallèles
             config: Configuration dict (sera passée aux workers)
+            base_seed: Seed de base (chaque worker aura base_seed + rank)
         """
         self.num_envs = num_envs
         self.parents = []
@@ -139,20 +149,26 @@ class ParallelEnvsMP:
 
         print(f"Creating {num_envs} parallel processes...")
 
-        # Créer les workers (passer config explicitement)
+        # Créer les workers (passer config + seed explicitement)
         for i in range(num_envs):
             parent_conn, child_conn = Pipe()
-            proc = Process(target=_worker, args=(make_env, child_conn, i, config), daemon=True)
+            worker_seed = base_seed + i  # Seed unique par worker
+            proc = Process(target=_worker, args=(make_env, child_conn, i, config, worker_seed), daemon=True)
             proc.start()
 
             self.parents.append(parent_conn)
             self.procs.append(proc)
 
-        # Récupérer les observations initiales
+        # Récupérer les observations initiales (avec gestion d'erreur)
+        self.obs = []
         for conn in self.parents:
             conn.send(("get_obs", None))
 
-        self.obs = [conn.recv() for conn in self.parents]
+        for conn in self.parents:
+            msg = conn.recv()
+            if isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "__error__":
+                raise RuntimeError(f"Worker error: {msg[1]}")
+            self.obs.append(msg)
 
         print(f"✓ {num_envs} processes started")
 
@@ -188,6 +204,11 @@ class ParallelEnvsMP:
 
         # Recevoir les résultats (les workers tournent en PARALLÈLE)
         results = [conn.recv() for conn in self.parents]
+
+        # Gestion d'erreur en cours de run
+        for r in results:
+            if isinstance(r, tuple) and len(r) == 2 and r[0] == "__error__":
+                raise RuntimeError(f"Worker error: {r[1]}")
 
         # Unpack
         obs, rewards, dones, infos = zip(*results)

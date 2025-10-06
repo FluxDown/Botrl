@@ -19,10 +19,19 @@ from src.obs.advanced_obs import AdvancedObs
 from src.rewards.combined_reward import CombinedReward
 
 
-def create_env(config):
-    """Crée 1 environnement RLGym"""
+def create_env(config, seed=0):
+    """
+    Crée 1 environnement RLGym.
+
+    Args:
+        config: Configuration dict
+        seed: Seed pour reproductibilité (différent par worker)
+    """
     env_config = config['environment']
     reward_config = config['rewards']
+
+    # TODO: RLGym 2.0 seeding si API disponible
+    # Pour l'instant, le seed est utilisé via numpy/random si nécessaire
 
     obs_builder = AdvancedObs(
         team_size=env_config['team_size'],
