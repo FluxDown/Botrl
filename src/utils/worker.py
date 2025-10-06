@@ -70,9 +70,14 @@ def worker(proc_idx, config, conn):
     result = env.reset()
     obs_dict = result[0] if isinstance(result, tuple) else result
 
-    # Agent ID (typiquement 0 pour 1v1)
-    agent_id = list(obs_dict.keys())[0] if isinstance(obs_dict, dict) else 0
-    obs = list(obs_dict.values())[0] if isinstance(obs_dict, dict) else obs_dict
+    # Agent IDs (en 1v1 = [0, 1], on contrôle seulement le 0)
+    if isinstance(obs_dict, dict):
+        agent_ids = list(obs_dict.keys())
+        agent_id = agent_ids[0]  # On contrôle le premier agent (bleu = 0)
+        obs = obs_dict[agent_id]
+    else:
+        agent_id = 0
+        obs = obs_dict
 
     # Episode tracking
     ep_reward = 0.0
@@ -85,7 +90,18 @@ def worker(proc_idx, config, conn):
 
             if cmd == "step":
                 action = data  # int pour LookupTable
-                action_dict = {agent_id: np.array([int(action)])}
+
+                # IMPORTANT : En 1v1, il y a 2 agents (0=bleu, 1=orange)
+                # On contrôle seulement l'agent 0, l'agent 1 fait une action random/noop
+                action_dict = {}
+                if isinstance(agent_id, list):
+                    # Multi-agents
+                    for idx, aid in enumerate(agent_id):
+                        action_dict[aid] = np.array([int(action)])
+                else:
+                    # Single agent - mais en 1v1 il faut quand même fournir action pour les 2
+                    action_dict[0] = np.array([int(action)])  # Notre agent
+                    action_dict[1] = np.array([0])  # Adversaire = noop (action 0)
 
                 # Step
                 step_result = env.step(action_dict)
@@ -96,11 +112,11 @@ def worker(proc_idx, config, conn):
                     obs_dict, rew_dict, term_dict, trunc_dict = step_result
                     info = {}
 
-                # Extraire valeurs
-                obs = list(obs_dict.values())[0]
-                reward = float(list(rew_dict.values())[0])
-                terminated = bool(list(term_dict.values())[0])
-                truncated = bool(list(trunc_dict.values())[0])
+                # Extraire valeurs pour NOTRE agent (0)
+                obs = obs_dict[agent_id]
+                reward = float(rew_dict[agent_id])
+                terminated = bool(term_dict[agent_id])
+                truncated = bool(trunc_dict[agent_id])
                 done = terminated or truncated
 
                 ep_reward += reward
@@ -118,7 +134,7 @@ def worker(proc_idx, config, conn):
                     # Reset
                     result = env.reset()
                     obs_dict = result[0] if isinstance(result, tuple) else result
-                    obs = list(obs_dict.values())[0] if isinstance(obs_dict, dict) else obs_dict
+                    obs = obs_dict[agent_id] if isinstance(obs_dict, dict) else obs_dict
 
                     ep_reward = 0.0
                     ep_length = 0

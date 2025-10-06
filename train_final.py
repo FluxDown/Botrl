@@ -1,28 +1,3 @@
-"""
-🚀 SCRIPT D'ENTRAÎNEMENT FINAL - TOUTES OPTIMISATIONS
-
-Inclut :
-✅ Multi-environnements parallèles (8-12 selon CPU)
-✅ RewardPartsToInfo wrapper (10 lignes, propage reward_parts)
-✅ VecNormalize (obs + returns, sauvegarde .pkl)
-✅ LR Schedule (linéaire 3e-4 → 5e-5)
-✅ Entropy schedule (0.01 → 0.001)
-✅ CUDA optimisé (torch.compile, TF32, cuDNN)
-✅ EvalCallback + best model auto
-✅ TensorBoard enrichi (reward breakdown, gradients, success)
-✅ Throughput aligné (num_envs × n_steps = batch_size)
-✅ Logs LR/entropy dans TensorBoard
-
-Config recommandée :
-- num_envs: 8-12
-- n_steps: 512 (8×512=4096)
-- batch_size: 4096
-- n_epochs: 4
-- gamma: 0.995
-- initial_lr: 3e-4
-- final_lr: 5e-5
-"""
-
 import os
 import torch
 import numpy as np

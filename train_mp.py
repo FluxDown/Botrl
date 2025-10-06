@@ -34,7 +34,7 @@ from src.agents.ppo import PPO, RolloutBuffer
 from src.utils.config import load_config
 from src.utils.logger import Logger
 from src.utils.custom_callbacks import CustomTBCallback, EvalCallback
-from src.utils.parallel_controller import ParallelEnvsMP
+from src.utils.parallel_envs_mp import ParallelEnvsMP
 from src.utils.vec_wrapper import SimpleVecNormalize, LRScheduler
 from src.utils.worker import create_env
 
@@ -121,7 +121,11 @@ def train():
     num_envs = get_num_envs(config)
     print(f"\n✓ Creating {num_envs} parallel PROCESSES...")
 
-    envs = ParallelEnvsMP(config, num_envs)
+    # Factory function pour créer des envs
+    def make_env():
+        return create_env(config)
+
+    envs = ParallelEnvsMP(make_env, num_envs)
 
     # Env d'évaluation (single)
     print("✓ Creating eval environment...")
