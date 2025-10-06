@@ -20,13 +20,14 @@ training:
 
 # Environment parameters
 environment:
-  num_envs: 12  # Nombre d'environnements parallèles
-  tick_skip: 160  # Frame skip (8 = 120Hz / 15fps)
+  num_envs: 8  # Nombre d'environnements parallèles (ajusté selon CPU)
+  tick_skip: 8  # Frame skip (8 = 120Hz / 15fps, RÉDUIT de 160 pour meilleur apprentissage)
   spawn_opponents: true
   team_size: 1
   timeout_seconds: 300
   truncate_on_goal: false
   deterministic_eval: true  # Évaluation déterministe
+  auto_adjust_envs: true  # Ajuste num_envs selon cpu_count()
 
 # Network architecture (OPTIMISÉ - plus petit = plus rapide)
 network:

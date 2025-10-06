@@ -1,0 +1,21 @@
+# Dépendances de développement (optionnelles)
+
+# Installation de base requise
+-r requirements.txt
+
+# Visualisation avec RLViser (optionnel, peut causer des erreurs d'install)
+# Décommenter si vous voulez la visualisation 3D dans le navigateur
+# rlviser>=0.6.0
+
+# Alternative : installer rlgym avec rlviser
+# pip install 'rlgym[rl-rlviser]==2.0.1'
+
+# Outils de développement
+ipython>=8.0.0
+jupyter>=1.0.0
+matplotlib>=3.5.0
+seaborn>=0.12.0
+
+# Profiling & Debug
+py-spy>=0.3.0
+memory-profiler>=0.61.0

@@ -1,5 +1,5 @@
-# Core RL framework
-rlgym[rl-rlviser]==2.0.1
+# Core RL framework (sans rlviser pour éviter erreurs d'install)
+rlgym==2.0.1
 
 # Deep Learning
 torch>=2.1.0,<3.0.0
