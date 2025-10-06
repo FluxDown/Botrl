@@ -1,239 +1,239 @@
-"""
-VRAI multi-processing pour environnements parallèles.
-1 process Python par env = pas de GIL = vrai parallélisme.
-
-Basé sur le pattern SubprocVecEnv de Stable-Baselines3.
-"""
-
+# src/utils/parallel_envs_mp.py
 from multiprocessing import Process, Pipe
 import numpy as np
 
 
-def _worker(env_fn, conn, worker_id, config, seed):
+def _build_action_dict(action_in, agent_ids, controlled_idx=0):
     """
-    Worker process qui tourne en parallèle.
+    action_in:
+      - int/np.int (action unique pour l'agent contrôlé) -> autres agents = 0 (no-op)
+      - list/tuple/ndarray de len == n_agents -> actions par agent.
+    """
+    n_agents = len(agent_ids)
 
-    Args:
-        env_fn: Factory function qui retourne un env
-        conn: Pipe de communication avec le process principal
-        worker_id: ID du worker (pour debug)
-        config: Configuration dict (passée explicitement pour Windows)
-        seed: Seed pour reproductibilité (différent par worker)
+    # liste complète fournie ?
+    if isinstance(action_in, (list, tuple, np.ndarray)):
+        if len(action_in) != n_agents:
+            raise KeyError(f"Expected actions for {n_agents} agents but received {len(action_in)}.")
+        return {agent_ids[i]: np.array([int(action_in[i])]) for i in range(n_agents)}
+
+    # scalaire -> on contrôle seulement controlled_idx, le reste = 0
+    a = int(action_in)
+    act = {}
+    for i, aid in enumerate(agent_ids):
+        act[aid] = np.array([a if i == controlled_idx else 0], dtype=np.int64)
+    return act
+
+
+def _unpack_reset(reset_out):
     """
+    Supporte reset() qui renvoie (obs_dict,) ou (obs_dict, info) ou obs_dict.
+    Retourne seulement obs_dict.
+    """
+    if isinstance(reset_out, tuple):
+        return reset_out[0]
+    return reset_out
+
+
+def _unpack_step(result, agent_ids, controlled_idx):
+    """
+    Supporte step() qui renvoie:
+      - 5 valeurs: (obs_dict, rew_dict, term_dict, trunc_dict, info)
+      - 4 valeurs: (obs_dict, rew_dict, done_dict, info)
+    Retourne: (obs_ctrl, rew_ctrl, done_bool, info, obs_dict_full)
+    """
+    if not isinstance(result, tuple):
+        raise RuntimeError(f"Env.step returned unexpected type: {type(result)}")
+
+    if len(result) == 5:
+        obs_d, rew_d, term_d, trunc_d, info = result
+        term = bool(list(term_d.values())[0])
+        trunc = bool(list(trunc_d.values())[0])
+        done = term or trunc
+        obs_ctrl = obs_d[agent_ids[controlled_idx]]
+        rew_ctrl = float(rew_d[agent_ids[controlled_idx]])
+        return obs_ctrl, rew_ctrl, done, info, obs_d
+
+    if len(result) == 4:
+        obs_d, rew_d, done_d, info = result
+        done = bool(list(done_d.values())[0])
+        obs_ctrl = obs_d[agent_ids[controlled_idx]]
+        rew_ctrl = float(rew_d[agent_ids[controlled_idx]])
+        return obs_ctrl, rew_ctrl, done, info, obs_d
+
+    raise ValueError(f"Env.step returned {len(result)} values (expected 4 or 5).")
+
+
+def _is_error_msg(msg):
+    """Vérifie si msg est du type ("__error__", "...") sans provoquer d'ambiguïté NumPy."""
+    return (
+        isinstance(msg, tuple)
+        and len(msg) == 2
+        and isinstance(msg[0], str)
+        and msg[0] == "__error__"
+    )
+
+
+def _worker(config, make_env_fn, conn, rank=0, base_seed=0):
+    """
+    Worker multiprocess Windows-safe, multi-agent aware.
+    - Détecte les agent_ids au reset et le nombre d'agents.
+    - Si le parent envoie UN scalaire, on le joue pour l'agent contrôlé, autres = no-op.
+    - Si le parent envoie une liste d'actions == n_agents, on les applique 1:1.
+    - Gère les 2 signatures de step() (4 ou 5 retours).
+    """
+    env = None
     try:
-        env = env_fn(config, seed=seed)
+        env = make_env_fn(config, seed=base_seed + rank)
 
-        # Reset initial
-        result = env.reset()
-        obs_dict = result[0] if isinstance(result, tuple) else result
+        # --- reset initial ---
+        obs_dict = _unpack_reset(env.reset())
+        if not isinstance(obs_dict, dict) or len(obs_dict) == 0:
+            raise RuntimeError("Env reset did not return a dict of observations per agent.")
+        agent_ids = list(obs_dict.keys())
+        controlled_idx = 0  # on contrôle le premier agent (change si besoin)
+        obs = obs_dict[agent_ids[controlled_idx]]
 
-        # En 1v1 : 2 agents, récupérer leurs IDs réels
-        if isinstance(obs_dict, dict):
-            agent_ids = list(obs_dict.keys())
-            agent_id = agent_ids[0]  # Notre agent (premier)
-            other_agent_id = agent_ids[1] if len(agent_ids) > 1 else None
-            obs = obs_dict[agent_id]
-            print(f"[Worker {worker_id}] Controlling agent {agent_id}, opponent {other_agent_id}")
-        else:
-            # Cas single agent
-            agent_id = 0
-            other_agent_id = None
-            obs = obs_dict
+        # --- warm-up RocketSim ---
+        try:
+            for _ in range(10):
+                act_dict = _build_action_dict(0, agent_ids, controlled_idx=controlled_idx)
+                step_out = env.step(act_dict)
+                _, _, done_tmp, _, _ = _unpack_step(step_out, agent_ids, controlled_idx)
+                if done_tmp:
+                    _ = env.reset()
+        except Exception:
+            pass
 
-        # Episode tracking
-        ep_reward = 0.0
-        ep_length = 0
+        # --- obs propre après warm-up ---
+        obs_dict = _unpack_reset(env.reset())
+        agent_ids = list(obs_dict.keys())  # revalide
+        obs = obs_dict[agent_ids[controlled_idx]]
 
-        # Boucle de communication
+        # >>> ENVOI OBS INITIALE <<<
+        conn.send(obs)
+
+        # --- boucle principale ---
         while True:
+            if not conn.poll(0.01):  # 10 ms
+                continue
+
             cmd, data = conn.recv()
 
             if cmd == "step":
-                act = int(data)
+                try:
+                    act_dict = _build_action_dict(data, agent_ids, controlled_idx=controlled_idx)
+                except KeyError as e:
+                    conn.send(("__error__", repr(e)))
+                    continue
 
-                # Action dict : notre agent + adversaire noop
-                action_dict = {agent_id: np.array([act])}
-                if other_agent_id is not None:
-                    action_dict[other_agent_id] = np.array([0])  # Adversaire = noop
+                step_out = env.step(act_dict)
+                obs, rew, done, info, obs_full = _unpack_step(step_out, agent_ids, controlled_idx)
 
-                # Step
-                step_result = env.step(action_dict)
-
-                if len(step_result) == 5:
-                    obs_dict, rew_dict, term_dict, trunc_dict, info = step_result
-                else:
-                    obs_dict, rew_dict, term_dict, trunc_dict = step_result
-                    info = {}
-
-                # Extraire pour notre agent
-                obs = obs_dict[agent_id]
-                reward = float(rew_dict[agent_id])
-                terminated = bool(term_dict[agent_id])
-                truncated = bool(trunc_dict[agent_id])
-                done = terminated or truncated
-
-                ep_reward += reward
-                ep_length += 1
-
-                # Propager reward_parts si disponible
-                if hasattr(env, 'reward_fn') and hasattr(env.reward_fn, '_last_reward_parts'):
-                    info['reward_parts'] = env.reward_fn._last_reward_parts
-
-                # Si done, ajouter episode info et reset
                 if done:
-                    info['episode'] = {'r': ep_reward, 'l': ep_length}
-                    info['success'] = 1.0 if ep_reward > 50 else 0.0
+                    obs_dict = _unpack_reset(env.reset())
+                    agent_ids = list(obs_dict.keys())  # revalide au cas où
+                    obs = obs_dict[agent_ids[controlled_idx]]
 
-                    # Reset
-                    result = env.reset()
-                    obs_dict = result[0] if isinstance(result, tuple) else result
-                    obs = obs_dict[agent_id] if isinstance(obs_dict, dict) else obs_dict
-
-                    ep_reward = 0.0
-                    ep_length = 0
-
-                # Envoyer résultat
-                conn.send((obs, reward, done, info))
+                conn.send((obs, rew, done, info))
 
             elif cmd == "get_obs":
                 conn.send(obs)
 
             elif cmd == "close":
-                env.close()
-                conn.close()
+                try: env.close()
+                except Exception: pass
+                try: conn.close()
+                except Exception: pass
                 break
 
+    except KeyboardInterrupt:
+        try: env and env.close()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+
     except Exception as e:
-        # Renvoyer l'erreur au parent (évite BrokenPipe/EOF silencieux)
-        print(f"Worker {worker_id} crashed: {e}")
-        import traceback
-        traceback.print_exc()
-        try:
-            conn.send(("__error__", repr(e)))
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
+        try: conn.send(("__error__", repr(e)))
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
 
 
 class ParallelEnvsMP:
     """
-    Gestionnaire d'environnements multi-process VRAIS.
-
-    Chaque env tourne dans son propre process Python.
-    Communication via Pipes (non-bloquante).
-
-    Usage:
-        def make_env(config):
-            return create_env(config)
-
-        envs = ParallelEnvsMP(make_env, num_envs=8, config=config)
-        obs_list = envs.reset()
-        obs_list, rewards, dones, infos = envs.step(actions)
-        envs.close()
+    Contrôleur de N workers.
+    - Reçoit l'obs initiale poussée par chaque worker.
+    - step(actions): accepte liste d'entiers (un par env) OU liste de listes (par agent).
+    - Remonte proprement les erreurs ("__error__", "...").
     """
+    def __init__(self, config, make_env_fn, n, base_seed=0):
+        self.n = int(n)
+        self.parents, self.procs = [], []
 
-    def __init__(self, make_env, num_envs, config, base_seed=0):
-        """
-        Args:
-            make_env: Factory function (config, seed) -> RLGym env
-            num_envs: Nombre d'environnements parallèles
-            config: Configuration dict (sera passée aux workers)
-            base_seed: Seed de base (chaque worker aura base_seed + rank)
-        """
-        self.num_envs = num_envs
-        self.parents = []
-        self.procs = []
+        for i in range(self.n):
+            p_conn, c_conn = Pipe()
+            p = Process(
+                target=_worker,
+                args=(config, make_env_fn, c_conn, i, base_seed),
+                daemon=True
+            )
+            p.start()
+            self.parents.append(p_conn)
+            self.procs.append(p)
 
-        print(f"Creating {num_envs} parallel processes...")
-
-        # Créer les workers (passer config + seed explicitement)
-        for i in range(num_envs):
-            parent_conn, child_conn = Pipe()
-            worker_seed = base_seed + i  # Seed unique par worker
-            proc = Process(target=_worker, args=(make_env, child_conn, i, config, worker_seed), daemon=True)
-            proc.start()
-
-            self.parents.append(parent_conn)
-            self.procs.append(proc)
-
-        # Récupérer les observations initiales (avec gestion d'erreur)
+        # Réception des obs initiales (ou d'une erreur)
         self.obs = []
-        for conn in self.parents:
-            conn.send(("get_obs", None))
-
-        for conn in self.parents:
-            msg = conn.recv()
-            if isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "__error__":
-                raise RuntimeError(f"Worker error: {msg[1]}")
+        for c in self.parents:
+            msg = c.recv()
+            if _is_error_msg(msg):
+                self.close()
+                raise RuntimeError(f"Worker error at init: {msg[1]}")
             self.obs.append(msg)
 
-        print(f"✓ {num_envs} processes started")
-
     def reset(self):
-        """
-        Reset tous les environnements.
-
-        Returns:
-            obs_list: Liste de num_envs observations
-        """
-        for conn in self.parents:
-            conn.send(("get_obs", None))
-
-        self.obs = [conn.recv() for conn in self.parents]
+        for c in self.parents:
+            try: c.send(("get_obs", None))
+            except Exception: pass
+        self.obs = [c.recv() for c in self.parents]
         return self.obs
 
     def step(self, actions):
-        """
-        Exécute les actions dans TOUS les envs EN PARALLÈLE.
+        # actions peut être:
+        #  - liste d'entiers (longueur = n_envs)
+        #  - liste de listes (longueur = n_envs, chaque sous-liste = n_agents)
+        for c, a in zip(self.parents, actions):
+            try: c.send(("step", a))
+            except Exception: pass
 
-        Args:
-            actions: Liste ou array de num_envs actions (int)
+        results, remaining = [], list(self.parents)
+        while remaining:
+            for c in remaining[:]:
+                try:
+                    if c.poll(0.01):  # 10 ms
+                        results.append(c.recv())
+                        remaining.remove(c)
+                except (EOFError, OSError):
+                    results.append(("__error__", "Pipe closed"))
+                    remaining.remove(c)
 
-        Returns:
-            obs_list: Liste de num_envs observations
-            rewards: Liste de num_envs rewards (float)
-            dones: Liste de num_envs dones (bool)
-            infos: Liste de num_envs info dicts
-        """
-        # Envoyer les actions à tous les workers (NON-BLOQUANT)
-        for conn, action in zip(self.parents, actions):
-            conn.send(("step", action))
-
-        # Recevoir les résultats (les workers tournent en PARALLÈLE)
-        results = [conn.recv() for conn in self.parents]
-
-        # Gestion d'erreur en cours de run
         for r in results:
-            if isinstance(r, tuple) and len(r) == 2 and r[0] == "__error__":
-                raise RuntimeError(f"Worker error: {r[1]}")
+            if _is_error_msg(r):
+                self.close()
+                raise RuntimeError(f"Worker error during step: {r[1]}")
 
-        # Unpack
-        obs, rewards, dones, infos = zip(*results)
-
+        obs, rew, done, infos = zip(*results)
         self.obs = list(obs)
-
-        return list(obs), list(rewards), list(dones), list(infos)
+        return list(obs), list(rew), list(done), list(infos)
 
     def close(self):
-        """Ferme tous les workers"""
-        for conn in self.parents:
-            try:
-                conn.send(("close", None))
-            except:
-                pass
-
-        for proc in self.procs:
-            proc.join(timeout=5)
-            if proc.is_alive():
-                proc.terminate()
-
-    def get_obs_space(self):
-        """Retourne la dimension de l'espace d'observation"""
-        return len(self.obs[0])
-
-    def get_action_space(self):
-        """Retourne le nombre d'actions (LookupTable = 90)"""
-        return 90
+        for c in self.parents:
+            try: c.send(("close", None))
+            except Exception: pass
+        for p in self.procs:
+            try: p.join(timeout=2.0)
+            except Exception: pass
+        for p in self.procs:
+            if p.is_alive():
+                try: p.terminate()
+                except Exception: pass

@@ -5,7 +5,7 @@ training:
   total_timesteps: 10000000
   batch_size: 4096  # ALIGNÉ : 8 envs × 512 steps = 4096 (throughput propre)
   n_steps: 512  # Steps par env avant update (8 × 512 = 4096 = batch_size)
-  n_epochs: 4  # Réduit de 10 pour aller plus vite
+  n_epochs: 2  # Réduit pour accélérer (compromis vitesse/stabilité)
   learning_rate: 0.0003  # Augmenté pour apprendre plus vite
   gamma: 0.995
   gae_lambda: 0.95
@@ -22,7 +22,7 @@ training:
 # Environment parameters
 environment:
   num_envs: 8  # Nombre d'environnements parallèles (ajusté selon CPU)
-  tick_skip: 8  # Frame skip (8 = 120Hz / 15fps, RÉDUIT de 160 pour meilleur apprentissage)
+  tick_skip: 12  # Frame skip (12 = 120Hz / 10fps, compromis vitesse/apprentissage)
   spawn_opponents: true
   team_size: 1
   timeout_seconds: 300
