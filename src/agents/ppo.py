@@ -152,6 +152,53 @@ class PPO:
                 value.cpu().item()
             )
 
+    def select_actions_batch(self, obs_batch, deterministic=False):
+        """
+        BATCHED forward pour plusieurs observations (BEAUCOUP plus rapide).
+
+        Args:
+            obs_batch: Liste ou array de N observations
+
+        Returns:
+            actions (N,), log_probs (N,), values (N,)
+        """
+        with torch.no_grad():
+            # Stack en un seul tensor (N, obs_dim)
+            if isinstance(obs_batch, list):
+                obs_tensor = torch.FloatTensor(np.array(obs_batch)).to(self.device)
+            else:
+                obs_tensor = torch.FloatTensor(obs_batch).to(self.device)
+
+            # Forward une seule fois
+            actions, log_probs, values = self.policy.get_action(obs_tensor, deterministic)
+
+            return (
+                actions.cpu().numpy(),
+                log_probs.cpu().numpy(),
+                values.cpu().numpy()
+            )
+
+    def get_value_batch(self, obs_batch):
+        """
+        DÉTERMINISTE value estimation pour bootstrap (plus propre que select_action).
+
+        Args:
+            obs_batch: Liste ou array de N observations
+
+        Returns:
+            values (N,)
+        """
+        with torch.no_grad():
+            if isinstance(obs_batch, list):
+                obs_tensor = torch.FloatTensor(np.array(obs_batch)).to(self.device)
+            else:
+                obs_tensor = torch.FloatTensor(obs_batch).to(self.device)
+
+            # Appel direct au value head (pas de sampling)
+            values = self.policy.get_value(obs_tensor)
+
+            return values.cpu().numpy().squeeze()
+
     def train(self, rollout_buffer: RolloutBuffer, n_epochs=10, batch_size=64):
         """
         Entraîne le policy network avec les données du rollout buffer

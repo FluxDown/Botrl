@@ -148,6 +148,20 @@ class ActorCritic(nn.Module):
 
         return action, log_prob, value
 
+    def get_value(self, obs):
+        """
+        Calcule SEULEMENT la value (pour bootstrap, plus rapide).
+
+        Args:
+            obs: Observation (batch)
+
+        Returns:
+            value: Estimation de la value function
+        """
+        value_features = self.value_net(obs)
+        value = self.value_head(value_features)
+        return value
+
     def evaluate_actions(self, obs, actions):
         """
         Évalue les actions pour le training PPO

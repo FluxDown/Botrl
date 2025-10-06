@@ -46,6 +46,9 @@ class CombinedReward(RewardFunction):
         self.last_ball_distance = {}  # Pour détecter les touches de balle
         self.last_had_car_contact = {}  # Pour détecter les bumps/demos
 
+        # Pour propagation vers info (utilisé par RewardPartsToInfo wrapper)
+        self._last_reward_parts = {}
+
     def reset(self, agents: list[int], initial_state: GameState, shared_info: dict = None) -> None:
         """Reset l'état pour les agents"""
         for agent_id in agents:
@@ -168,6 +171,9 @@ class CombinedReward(RewardFunction):
 
             # Stocker les reward_parts pour le logging
             shared_info["reward_parts"][agent_id] = reward_parts
+
+            # NOUVEAU : Stocker aussi dans _last_reward_parts pour le wrapper
+            self._last_reward_parts = reward_parts
 
             rewards[agent_id] = reward
 
