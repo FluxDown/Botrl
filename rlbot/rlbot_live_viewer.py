@@ -231,14 +231,24 @@ class RLBotLiveViewer(BaseAgent):
         self.policy.maybe_reload()
 
         # TODO: Construire l'observation depuis le GameTickPacket
-        # Pour l'instant, retourne une action random
-        # Tu devras implémenter la conversion RLBot → RLGym obs
+        # Pour l'instant, utilise des zeros comme placeholder
+        # L'obs_dim sera détecté automatiquement depuis les poids du modèle
 
-        # Placeholder: action random
-        action_idx = self.policy.act(np.zeros(107))  # Remplacer par vraie obs
+        # Placeholder: observation vide (sera adapté automatiquement à la bonne taille)
+        # En attendant l'implémentation complète de l'observation
+        if self.policy.policy is not None:
+            obs_dim = self.policy.policy.policy_net[0].in_features
+            obs = np.zeros(obs_dim, dtype=np.float32)
+        else:
+            obs = np.zeros(107, dtype=np.float32)  # Taille par défaut
 
-        # Mapper vers ControllerState via LookupTable
-        action_array = self.action_parser.get_action_space()[action_idx]
+        action_idx = self.policy.act(obs)
+
+        # Mapper vers ControllerState via LOOKUP_TABLE
+        if action_idx < len(LOOKUP_TABLE):
+            action_array = LOOKUP_TABLE[action_idx]
+        else:
+            action_array = [0, 0, 0, 0, 0, 0, 0, 0]  # Noop
 
         ctrl = SimpleControllerState()
         ctrl.throttle = float(action_array[0])
