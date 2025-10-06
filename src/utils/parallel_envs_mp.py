@@ -227,13 +227,27 @@ class ParallelEnvsMP:
         return list(obs), list(rew), list(done), list(infos)
 
     def close(self):
+        # Envoyer signal de fermeture
         for c in self.parents:
-            try: c.send(("close", None))
-            except Exception: pass
-        for p in self.procs:
-            try: p.join(timeout=2.0)
-            except Exception: pass
+            try:
+                c.send(("close", None))
+            except Exception:
+                pass
+
+        # Attendre brièvement, puis forcer la terminaison
+        import time
+        time.sleep(0.2)
+
         for p in self.procs:
             if p.is_alive():
-                try: p.terminate()
-                except Exception: pass
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+
+        # Fermer les pipes
+        for c in self.parents:
+            try:
+                c.close()
+            except Exception:
+                pass

@@ -139,7 +139,7 @@ def train():
 
             # buffer fill
             for i in range(num_envs):
-                buffer.add(obs_list[i], acts[i], logps[i], rew_array[i], vals[i], dones[i])
+                buffer.add(obs_list[i], [acts[i]], logps[i], rew_array[i], vals[i], dones[i])
                 total_steps += 1
                 pbar.update(1)
                 # TB metrics par step (léger)
@@ -163,7 +163,7 @@ def train():
                 next_obs_list = [obs_array[i] for i in range(num_envs)]
 
                 for i in range(num_envs):
-                    buffer.add(obs_list[i], acts[i], logps[i], rew_array[i], vals[i], dones[i])
+                    buffer.add(obs_list[i], [acts[i]], logps[i], rew_array[i], vals[i], dones[i])
                     total_steps += 1
                     pbar.update(1)
                     tb_cb.on_step(infos[i], total_steps)
@@ -202,6 +202,28 @@ def train():
                 eval_rew = eval_cb.evaluate(agent, total_steps, writer=tb_cb.writer)
                 if eval_rew is not None:
                     print(f"✓ Eval @ {total_steps}: {eval_rew:.2f}")
+
+            # Save checkpoint régulier
+            save_interval = config['training'].get('save_interval', 100000)
+            if total_steps % save_interval == 0 and total_steps > 0:
+                ckpt_path = os.path.join(config['logging']['checkpoint_dir'], f'checkpoint_{total_steps}.pth')
+                norm_path = os.path.join(config['logging']['checkpoint_dir'], f'vecnormalize_{total_steps}.npz')
+                agent.save(ckpt_path)
+                normalizer.save(norm_path)
+                print(f"\n✓ Saved checkpoint @ {total_steps}")
+
+            # Save LIVE policy pour RLBot (toutes les 4k steps = chaque update PPO)
+            if total_steps % 4096 == 0 and total_steps > 0:
+                live_path_tmp = os.path.join(config['logging']['checkpoint_dir'], 'latest_policy.tmp')
+                live_path = os.path.join(config['logging']['checkpoint_dir'], 'latest_policy.pt')
+                torch.save({
+                    'policy_state_dict': agent.policy.state_dict(),
+                    'obs_mean': normalizer.obs_rms.mean if normalizer.obs_rms else None,
+                    'obs_var': normalizer.obs_rms.var if normalizer.obs_rms else None,
+                    'total_steps': total_steps
+                }, live_path_tmp)
+                os.replace(live_path_tmp, live_path)  # Atomic swap
+                print(f"\n[LIVE] Policy saved @ {total_steps} steps")
 
         pbar.close()
 
