@@ -56,8 +56,23 @@ class CombinedReward(RewardFunction):
         """Calcule les récompenses pour chaque agent"""
         rewards = {}
 
+        # Initialiser shared_info pour stocker les reward_parts
+        if shared_info is None:
+            shared_info = {}
+        if "reward_parts" not in shared_info:
+            shared_info["reward_parts"] = {}
+
         for agent_id in agents:
             reward = 0.0
+            reward_parts = {
+                "goal": 0.0,
+                "touch": 0.0,
+                "progress": 0.0,
+                "boost": 0.0,
+                "demo": 0.0,
+                "aerial": 0.0
+            }
+
             car = state.cars[agent_id]
 
             # Position et vitesse de la voiture
@@ -77,17 +92,21 @@ class CombinedReward(RewardFunction):
                 own_goal_pos = np.array([0, 5120, 0])  # But orange
 
             # 1. Récompense pour toucher la balle
+            touch_reward = 0.0
             if car.ball_touches > 0:
-                reward += self.touch_ball_weight
+                touch_reward = self.touch_ball_weight
+                reward += touch_reward
+            reward_parts["touch"] = touch_reward
 
             # 2. Récompense pour se diriger vers la balle
             direction_to_ball = ball_pos - car_pos
             dist_to_ball = np.linalg.norm(direction_to_ball)
 
+            progress_reward = 0.0
             if dist_to_ball > 0:
                 direction_to_ball_norm = direction_to_ball / dist_to_ball
                 velocity_to_ball = np.dot(car_vel, direction_to_ball_norm)
-                reward += self.velocity_player_to_ball_weight * velocity_to_ball / 2300  # Normaliser par vitesse max
+                progress_reward += self.velocity_player_to_ball_weight * velocity_to_ball / 2300  # Normaliser par vitesse max
 
             # 3. Récompense pour diriger la balle vers le but
             direction_ball_to_goal = goal_pos - ball_pos
@@ -96,11 +115,16 @@ class CombinedReward(RewardFunction):
             if dist_ball_to_goal > 0:
                 direction_ball_to_goal_norm = direction_ball_to_goal / dist_ball_to_goal
                 velocity_ball_to_goal = np.dot(ball_vel, direction_ball_to_goal_norm)
-                reward += self.velocity_ball_to_goal_weight * velocity_ball_to_goal / 6000  # Normaliser
+                progress_reward += self.velocity_ball_to_goal_weight * velocity_ball_to_goal / 6000  # Normaliser
+
+            reward += progress_reward
+            reward_parts["progress"] = progress_reward
 
             # 4. Récompense pour économiser le boost
             boost_amount = car.boost_amount
-            reward += self.save_boost_weight * boost_amount / 100
+            boost_reward = self.save_boost_weight * boost_amount / 100
+            reward += boost_reward
+            reward_parts["boost"] = boost_reward
 
             # 5. Récompense pour aligner la balle avec le but
             if dist_to_ball < 500:  # Seulement si proche de la balle
@@ -112,23 +136,38 @@ class CombinedReward(RewardFunction):
                         car_to_ball / np.linalg.norm(car_to_ball),
                         ball_to_goal / np.linalg.norm(ball_to_goal)
                     )
-                    reward += self.align_ball_goal_weight * alignment
+                    alignment_reward = self.align_ball_goal_weight * alignment
+                    reward += alignment_reward
+                    reward_parts["progress"] += alignment_reward
 
             # 6. Récompense pour les aériens
+            aerial_reward = 0.0
             if car_pos[2] > 300 and dist_to_ball < 400:  # En l'air et proche de la balle
-                reward += self.aerial_weight
+                aerial_reward = self.aerial_weight
+                reward += aerial_reward
+            reward_parts["aerial"] = aerial_reward
 
             # 7. Récompense pour bump/demo
+            demo_reward = 0.0
             if car.had_car_contact and not self.last_had_car_contact.get(agent_id, False):
-                reward += self.demo_weight
+                demo_reward = self.demo_weight
+                reward += demo_reward
             self.last_had_car_contact[agent_id] = car.had_car_contact
+            reward_parts["demo"] = demo_reward
 
             # 8. Pénalité pour se faire démo
             if car.is_demoed:
-                reward += self.got_demoed_weight
+                got_demoed_reward = self.got_demoed_weight
+                reward += got_demoed_reward
+                reward_parts["demo"] += got_demoed_reward
 
             # 9. Pénalité pour être loin de la balle (encourage l'action)
-            reward += self.distance_to_ball_weight * (dist_to_ball / 10000)
+            distance_penalty = self.distance_to_ball_weight * (dist_to_ball / 10000)
+            reward += distance_penalty
+            reward_parts["progress"] += distance_penalty
+
+            # Stocker les reward_parts pour le logging
+            shared_info["reward_parts"][agent_id] = reward_parts
 
             rewards[agent_id] = reward
 

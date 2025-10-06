@@ -14,15 +14,19 @@ training:
   max_grad_norm: 0.5
   save_interval: 100000  # Sauvegarde plus fréquente
   log_interval: 1000  # Log plus fréquent pour voir les progrès
+  seed: 42  # Seed pour la reproductibilité
+  eval_freq: 50000  # Fréquence d'évaluation du modèle
+  n_eval_episodes: 10  # Nombre d'épisodes d'évaluation
 
 # Environment parameters
 environment:
   num_envs: 12  # Nombre d'environnements parallèles
-  tick_skip: 160
+  tick_skip: 160  # Frame skip (8 = 120Hz / 15fps)
   spawn_opponents: true
   team_size: 1
   timeout_seconds: 300
   truncate_on_goal: false
+  deterministic_eval: true  # Évaluation déterministe
 
 # Network architecture (OPTIMISÉ - plus petit = plus rapide)
 network:

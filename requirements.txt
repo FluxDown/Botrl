@@ -1,9 +1,21 @@
+# Core RL framework
 rlgym[rl-rlviser]==2.0.1
-torch>=2.0.0
-numpy>=1.24.0
+
+# Deep Learning
+torch>=2.1.0,<3.0.0
+numpy>=1.24.0,<2.0.0
+
+# RL algorithms
+stable-baselines3>=2.0.0,<3.0.0
+gymnasium>=0.28.0,<1.0.0
+
+# Logging & Monitoring
 tensorboard>=2.13.0
 wandb>=0.15.0
-stable-baselines3>=2.0.0
-gymnasium>=0.28.0
+
+# Configuration & Utils
 pyyaml>=6.0
 tqdm>=4.65.0
+
+# Python version recommendation: 3.10 ou 3.11
+# Installation: pip install -r requirements.txt

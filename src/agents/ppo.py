@@ -109,6 +109,7 @@ class PPO:
         device='cpu'
     ):
         self.policy = policy_network.to(device)
+        self.policy_network = self.policy  # Alias pour compatibilité avec les callbacks
         self.device = device
 
         # Hyperparamètres
